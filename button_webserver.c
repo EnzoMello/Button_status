@@ -1,5 +1,3 @@
-
-
 #include "pico/stdlib.h"
 #include "hardware/adc.h"
 #include "pico/cyw43_arch.h"
@@ -18,44 +16,53 @@
 #define BUTTON_A 5
 #define BUTTON_B 6
 
-// Funções para leitura da temperatura 
+/**
+ * @brief Inicializa o ADC no GPIO 28
+ * @details Configura o canal ADC2, que corresponde ao GPIO 28, como entrada analógica.
+ */
 void tmp_init(){
-    adc_init(); // Inicializa o ADC
-    adc_gpio_init(28); // Habilita o GPIO 28 como entrada analógica
-    adc_select_input(2); // O GPIO 28 corresponde ao canal ADC2
+    adc_init();
+    adc_gpio_init(28);
+    adc_select_input(2);
 };
 
+/**
+ * @brief Realiza a leitura de temperatura no GPIO 28
+ * @return Temperatura estimada em graus Celsius
+ * @details Realiza uma média de 10 leituras para maior estabilidade e aplica um fator de escala.
+ */
 float get_temp() {
-    int num_readings = 10;  // Número de leituras para a média
+    int num_readings = 10;
     float sum = 0.0f;
 
-    // Ler múltiplos valores e somá-los
     for (int i = 0; i < num_readings; i++) {
         uint16_t raw_value = adc_read();
         float voltage = (raw_value * 3.3f) / (1 << 12);
         sum += voltage;
-        sleep_ms(10);  // Espera um pouco entre as leituras para evitar leituras muito rápidas
+        sleep_ms(10);
     }
 
-    // Calcular a média das leituras
     float avg_voltage = sum / num_readings;
-
-    // Aplicar um fator de escala para reduzir a sensibilidade
-    float temperature = (avg_voltage - 0.5f) / (0.02f * 2); // Diminuir a sensibilidade multiplicando por 2
+    float temperature = (avg_voltage - 0.5f) / (0.02f * 2);
 
     return temperature;
 }
 
-
-
-// Função de callback para processar requisições HTTP
+/**
+ * @brief Callback para processar requisições HTTP
+ * @param arg Argumento genérico (não utilizado)
+ * @param tpcb Ponteiro para a conexão TCP
+ * @param p Buffer de pacote recebido
+ * @param err Código de erro
+ * @return ERR_OK em caso de sucesso
+ * @details Responde com uma página HTML ou dados JSON dependendo da URL requisitada.
+ */
 static err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err) {
     if (!p) {
         tcp_close(tpcb);
         return ERR_OK;
     }
 
-    // Copia o payload completo para uma string terminada em '\0'
     char *request = malloc(p->tot_len + 1);
     if (!request) {
         pbuf_free(p);
@@ -64,25 +71,20 @@ static err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, er
     memcpy(request, p->payload, p->tot_len);
     request[p->tot_len] = '\0';
 
-    // Informa ao stack LWIP que consumimos os bytes
     tcp_recved(tpcb, p->tot_len);
     pbuf_free(p);
 
-    // Lê sensores
     uint8_t btn_a = !gpio_get(BUTTON_A);
     uint8_t btn_b = !gpio_get(BUTTON_B);
-   
+
     adc_select_input(2);
     float temperatura = get_temp();
 
-    
     bool is_data = (strstr(request, "GET /data") != NULL);
 
-    // Buffer de resposta único, em memória estática
     static char response_buffer[1024];
 
     if (is_data) {
-        // monta JSON
         char json_body[256];
         int n = snprintf(json_body, sizeof(json_body),
             "{\"temperatura\":%.2f,\"btn_a\":%d,\"btn_b\":%d}",
@@ -95,10 +97,9 @@ static err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, er
             "Connection: close\r\n"
             "\r\n",
             n);
-        // copia o corpo JSON após o header
+
         memcpy(response_buffer + header_len, json_body, n);
     } else {
-        // monta HTML
         const char *html_body =
             "<!DOCTYPE html><html><head>"
             "<meta charset=\"utf-8\">"
@@ -135,7 +136,6 @@ static err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, er
         memcpy(response_buffer + header_len, html_body, body_len);
     }
 
-    // envia tudo de uma vez
     tcp_write(tpcb, response_buffer, strlen(response_buffer), TCP_WRITE_FLAG_COPY);
     tcp_output(tpcb);
 
@@ -143,21 +143,30 @@ static err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, er
     return ERR_OK;
 }
 
-// Função de callback ao aceitar conexões TCP
+/**
+ * @brief Callback ao aceitar conexões TCP
+ * @param arg Argumento não utilizado
+ * @param newpcb Estrutura da nova conexão
+ * @param err Código de erro
+ * @return ERR_OK
+ * @details Define a função de recebimento para a nova conexão.
+ */
 static err_t tcp_server_accept(void *arg, struct tcp_pcb *newpcb, err_t err)
 {
     tcp_recv(newpcb, tcp_server_recv);
     return ERR_OK;
 }
 
-
-// Função principal
+/**
+ * @brief Função principal do programa
+ * @return 0 se sucesso, -1 se erro
+ * @details Inicializa GPIOs, Wi-Fi e inicia servidor TCP escutando na porta 80.
+ */
 int main()
 {
     stdio_init_all();
-    sleep_ms(2000); // Espera para o terminal conectar
+    sleep_ms(2000);
 
-    // Inicializa botões como entrada com pull-up
     gpio_init(BUTTON_A);
     gpio_set_dir(BUTTON_A, GPIO_IN);
     gpio_pull_up(BUTTON_A);
@@ -166,12 +175,9 @@ int main()
     gpio_set_dir(BUTTON_B, GPIO_IN);
     gpio_pull_up(BUTTON_B);
 
-    // Inicializa ADC para joystick
     adc_init();
-
     tmp_init();
 
-    // Inicializa Wi-Fi
     if (cyw43_arch_init()) {
         printf("Falha ao inicializar Wi-Fi\n");
         return -1;
@@ -191,7 +197,6 @@ int main()
         printf("IP do dispositivo: %s\n", ipaddr_ntoa(&netif_default->ip_addr));
     }
 
-    // Configura o servidor TCP (porta 80)
     struct tcp_pcb *server = tcp_new();
     if (!server) {
         printf("Falha ao criar servidor TCP\n");
@@ -208,9 +213,8 @@ int main()
 
     printf("Servidor ouvindo na porta 80\n");
 
-    // Loop principal
     while (true) {
-        cyw43_arch_poll(); // Necessário para manter Wi-Fi funcionando
+        cyw43_arch_poll();
     }
 
     cyw43_arch_deinit();
